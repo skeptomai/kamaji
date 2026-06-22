@@ -41,6 +41,27 @@ operator from "single point of failure" to "active/passive HA".
   process kill under load). Inherently flaky; runs in a separate, non-blocking
   lane.
 
+## Verification status and prerequisites
+
+These caveats apply to all the implemented tests below:
+
+- **Compile-checked, not yet run.** The implemented tests pass `go vet ./e2e/`
+  but have not been executed against a live cluster in this branch. They use the
+  existing e2e harness (`envtest` with `UseExistingCluster: true`), so they
+  require a real management cluster with the Kamaji operator deployed in the
+  `kamaji-system` namespace and a working datastore — the same prerequisites as
+  the rest of `e2e/`.
+- **They scale the operator.** Each failover test scales the controller
+  Deployment to 2 replicas in `BeforeEach` and restores `replicaCount: 1` in
+  `JustAfterEach`, because the suite's `utils_test.go` asserts a single operator
+  pod. Running them concurrently with other specs against the same cluster is
+  unsafe; they assume serial execution.
+- **Leader identification is implementation-coupled.** The helpers read the
+  `coordination.k8s.io/v1` Lease named `kamaji.clastix.io` and parse the leader
+  pod from `holderIdentity` (`<podName>_<uuid>`, controller-runtime's format).
+  If the `LeaderElectionID` or the holder-identity encoding changes upstream,
+  `leaderPodName()` in `e2e/operator_failover_test.go` must be updated.
+
 ## Failure modes
 
 ### 1. Leader pod death → re-election and resumed reconciliation  *(deterministic)*
@@ -65,6 +86,19 @@ failover window because the Service still routes to the dead pod.
 `Fail` webhook). This validates that readiness probes evict the dying pod from
 Service endpoints quickly enough and that the surviving pod serves admission.
 
+**Design note:** the test asserts admission *recovers promptly* (`Eventually`,
+30s) and then *stays available* (`Consistently`, 15s), rather than demanding
+zero failed calls from the instant of the kill. This is deliberate: with a
+single replica the `Eventually` would fail for the entire pod-reschedule
+duration, so the contrast that proves HA still holds. If endpoint-removal lag
+for the terminating pod produces a transient blip inside the window, the test
+surfaces it as a failure — and that is *actionable signal*, not noise: it points
+to a missing `preStop` hook or too-short `terminationGracePeriodSeconds` on the
+controller, which should be fixed rather than tolerated. The probe is an
+annotation `Patch` (monotonically increasing value) so every poll is a genuine
+`UPDATE` through the `Fail`-policy mutating webhook, not a no-op the API server
+might skip.
+
 **Status:** implemented (`e2e/webhook_failover_availability_test.go`).
 
 ### 3. Mid-flight reconcile interruption  *(deterministic)*
@@ -77,6 +111,19 @@ kill the leader while the operation is in flight, and assert the TCP still
 converges to `Ready` and the operation completes. This exercises reconciler
 idempotency/resumability — the property most at risk when controller logic is
 validated only end-to-end.
+
+**Design note:** the load-bearing assertion is the *running version* after
+convergence (`status.kubernetesResources.version.version == toVersion`), not
+just `Ready` — a leader could report `Ready` having reverted or stalled the
+upgrade. The kill is issued immediately after the version `Patch` so it races
+the in-flight reconcile; the test asserts convergence regardless of exactly
+where the interruption lands.
+
+**Caveat — upgrade target is an assumption:** the test upgrades `v1.23.6 ->
+v1.24.0`, a single linear minor bump (non-linear jumps are rejected by the
+version webhook, see `e2e/tcp_validation_version_nonlinear_test.go`). If the
+e2e environment supports a different version range, adjust the `fromVersion` /
+`toVersion` constants in `e2e/operator_failover_upgrade_test.go` accordingly.
 
 **Status:** implemented (`e2e/operator_failover_upgrade_test.go`).
 
