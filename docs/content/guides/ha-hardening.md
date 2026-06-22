@@ -73,8 +73,13 @@ make e2e                       # spins up KinD, installs the stack, runs ./e2e
 make e2e-chaos                 # = make e2e + chaos-mesh, then the chaos-tagged specs
 
 # Multi-node lane (FM9–FM11): non-gating, needs a real >=2-node cluster
-#   install Kamaji with -f charts/kamaji/values-ha.yaml; FM10/FM11 need fault hooks:
-#   KAMAJI_E2E_POWER_OFF / KAMAJI_E2E_POWER_ON / KAMAJI_E2E_NET_CUT / KAMAJI_E2E_NET_RESTORE
+#   install Kamaji with -f charts/kamaji/values-ha.yaml; FM10/FM11 need fault hooks
+#   (commands with a {{node}} placeholder). hack/lab-fault.py is an example CLI to
+#   wire your smart-outlet / IPMI / switch library into:
+#     export KAMAJI_E2E_POWER_OFF='python3 hack/lab-fault.py off {{node}}'
+#     export KAMAJI_E2E_POWER_ON='python3 hack/lab-fault.py on  {{node}}'
+#     export KAMAJI_E2E_NET_CUT='python3 hack/lab-fault.py cut     {{node}}'
+#     export KAMAJI_E2E_NET_RESTORE='python3 hack/lab-fault.py restore {{node}}'
 make e2e-multinode
 
 # Typecheck without a cluster
