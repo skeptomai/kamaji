@@ -77,18 +77,23 @@ disruptions cannot drain all endpoints at once.
   same harness as the rest of `e2e/`. Safe to gate the merge queue.
 - **Chaos (non-gating):** requires fault injection (network partition, latency,
   process kill under load). Inherently flaky; runs in a separate, non-blocking
-  lane.
+  lane. These tests live behind the `chaos` build tag and carry `Label("chaos")`,
+  so they are excluded from the default suite and from `go vet ./e2e/`. Run them
+  with `make e2e-chaos` (installs chaos-mesh, then
+  `ginkgo --tags=chaos --label-filter=chaos ./e2e`), and typecheck them with
+  `go vet -tags chaos ./e2e/`.
 
 ## Verification status and prerequisites
 
 These caveats apply to all the implemented tests below:
 
-- **Compile-checked, not yet run.** The implemented tests pass `go vet ./e2e/`
-  but have not been executed against a live cluster in this branch. They use the
-  existing e2e harness (`envtest` with `UseExistingCluster: true`), so they
-  require a real management cluster with the Kamaji operator deployed in the
-  `kamaji-system` namespace and a working datastore — the same prerequisites as
-  the rest of `e2e/`.
+- **Compile-checked, not yet run.** The deterministic tests pass `go vet ./e2e/`
+  and the chaos tests pass `go vet -tags chaos ./e2e/`, but none have been
+  executed against a live cluster in this branch. They use the existing e2e
+  harness (`envtest` with `UseExistingCluster: true`), so they require a real
+  management cluster with the Kamaji operator deployed in the `kamaji-system`
+  namespace and a working datastore — the same prerequisites as the rest of
+  `e2e/`. The chaos tests additionally require chaos-mesh (`make e2e-chaos`).
 - **They scale the operator.** Each failover test scales the controller
   Deployment to 2 replicas in `BeforeEach` and restores `replicaCount: 1` in
   `JustAfterEach`, because the suite's `utils_test.go` asserts a single operator
@@ -244,12 +249,22 @@ second image tag.
 **Risk:** the active leader is partitioned from the API server but keeps
 running; two managers act simultaneously.
 
-**Test:** network-isolate the leader from the API server (NetworkPolicy or
-chaos-mesh), assert it self-terminates on the renew deadline, and assert the
-standby takes over with no overlapping writes. Inherently timing-sensitive;
-belongs in the chaos lane.
+**Test:** partition the leader pod from the kube-apiserver with a chaos-mesh
+`NetworkChaos` (`action: partition`, leader selected by pod name, target = the
+`kube-apiserver` static pods). Assert a *different* pod acquires the lease (the
+partitioned leader steps down) and that the partitioned manager self-terminated
+(its container restart count increases). chaos-mesh injects the partition in the
+pod's network namespace, so it works regardless of the CNI's NetworkPolicy
+support.
 
-**Status:** to implement (chaos lane).
+**Design note:** "no overlapping writes" cannot be asserted directly, so the
+test uses two observable proxies: leadership *moving off* the partitioned pod
+(the lease can only have one holder, and it is no longer the isolated one) and
+the isolated manager *exiting* (controller-runtime calls `os.Exit` when it
+cannot renew the lease). Together these show the partitioned leader did not keep
+acting as a second leader.
+
+**Status:** implemented, chaos lane (`e2e/chaos_partition_test.go`).
 
 ### 8. Datastore failure  *(chaos / semi-deterministic)*
 
@@ -258,12 +273,18 @@ availability depends on the datastore (`etcd`, or `kine` over MySQL / PostgreSQL
 / NATS), not on the operator. A datastore failure is the more probable
 production incident at scale.
 
-**Test:** kill an `etcd` member or the `kine` backend primary; assert tenant
-control planes keep serving and that the operator reconnects and reconciles once
-the datastore recovers. Use toxiproxy for latency/partition injection on the
-datastore connection.
+**Test:** kill one member of the multi-member (quorum) datastore; assert the
+tenant control plane stays `Ready` throughout (`Consistently`, quorum holds) and
+that the datastore recovers its full membership. A latency/partition variant
+(chaos-mesh `IOChaos` or a toxiproxy sidecar in front of the datastore) is a
+natural extension.
 
-**Status:** to implement (chaos lane).
+**Caveat — environment-specific selector:** the datastore pod selector is
+install-dependent. The test **Skips** (rather than fails) if it cannot locate a
+multi-member datastore, so the label must be adjusted per environment. This is
+the test most likely to need tuning before it runs.
+
+**Status:** implemented, chaos lane (`e2e/chaos_datastore_test.go`).
 
 ## Summary
 
@@ -275,5 +296,5 @@ datastore connection.
 | 4 | PDB enforcement under drain | Deterministic | Implemented |
 | 5 | Lease singleton under concurrent startup | Deterministic | Implemented |
 | 6 | Operator rolling upgrade | Deterministic | Implemented |
-| 7 | Network partition / split-brain | Chaos | To implement |
-| 8 | Datastore failure | Chaos | To implement |
+| 7 | Network partition / split-brain | Chaos | Implemented |
+| 8 | Datastore failure | Chaos | Implemented |
