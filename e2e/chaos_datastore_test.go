@@ -31,9 +31,12 @@ import (
 // label for your install. A latency/partition variant (chaos-mesh IOChaos or a
 // toxiproxy sidecar in front of the datastore) is a natural extension.
 var _ = Describe("Tenant control plane survives a datastore member loss", Label("chaos"), func() {
+	// The e2e env installs etcd via the clastix/kamaji-etcd chart as Helm release
+	// "etcd-primary" in kamaji-system (see the Makefile `datastore-etcd` target),
+	// so members carry app.kubernetes.io/instance=etcd-primary. Adjust per install.
 	const (
-		datastoreLabelKey   = "app.kubernetes.io/name"
-		datastoreLabelValue = "etcd"
+		datastoreLabelKey   = "app.kubernetes.io/instance"
+		datastoreLabelValue = "etcd-primary"
 	)
 
 	var tcp *kamajiv1alpha1.TenantControlPlane
