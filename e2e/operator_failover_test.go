@@ -55,6 +55,21 @@ func operatorDeployment() *appsv1.Deployment {
 	return &list.Items[0]
 }
 
+// controllerPods returns the names of the Kamaji controller pods.
+func controllerPods() []string {
+	list := &corev1.PodList{}
+	Expect(k8sClient.List(context.Background(), list,
+		client.InNamespace(operatorNamespace),
+		client.MatchingLabels{"app.kubernetes.io/component": "controller-manager"})).To(Succeed())
+
+	names := make([]string, 0, len(list.Items))
+	for i := range list.Items {
+		names = append(names, list.Items[i].GetName())
+	}
+
+	return names
+}
+
 func scaleOperator(replicas int32) {
 	deploy := operatorDeployment()
 	deploy.Spec.Replicas = pointer.To(replicas)
