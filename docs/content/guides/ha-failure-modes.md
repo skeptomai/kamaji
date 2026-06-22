@@ -65,7 +65,7 @@ failover window because the Service still routes to the dead pod.
 `Fail` webhook). This validates that readiness probes evict the dying pod from
 Service endpoints quickly enough and that the surviving pod serves admission.
 
-**Status:** to implement.
+**Status:** implemented (`e2e/webhook_failover_availability_test.go`).
 
 ### 3. Mid-flight reconcile interruption  *(deterministic)*
 
@@ -78,7 +78,7 @@ converges to `Ready` and the operation completes. This exercises reconciler
 idempotency/resumability — the property most at risk when controller logic is
 validated only end-to-end.
 
-**Status:** to implement.
+**Status:** implemented (`e2e/operator_failover_upgrade_test.go`).
 
 ### 4. PodDisruptionBudget enforcement under node drain  *(deterministic)*
 
@@ -146,8 +146,8 @@ datastore connection.
 | # | Failure mode | Tier | Status |
 | --- | --- | --- | --- |
 | 1 | Leader pod death → re-election | Deterministic | Implemented |
-| 2 | Webhook availability during failover | Deterministic | To implement |
-| 3 | Mid-flight reconcile interruption | Deterministic | To implement |
+| 2 | Webhook availability during failover | Deterministic | Implemented |
+| 3 | Mid-flight reconcile interruption | Deterministic | Implemented |
 | 4 | PDB enforcement under drain | Deterministic | To implement |
 | 5 | Lease singleton under concurrent startup | Deterministic | To implement |
 | 6 | Operator rolling upgrade | Deterministic | To implement |
