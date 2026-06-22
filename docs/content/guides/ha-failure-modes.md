@@ -82,18 +82,30 @@ disruptions cannot drain all endpoints at once.
   with `make e2e-chaos` (installs chaos-mesh, then
   `ginkgo --tags=chaos --label-filter=chaos ./e2e`), and typecheck them with
   `go vet -tags chaos ./e2e/`.
+- **Multi-node (non-gating):** require a real cluster of ≥2 nodes; behind the
+  `multinode` build tag with `Label("multinode")`. Run with `make e2e-multinode`
+  against an existing cluster (set `KUBECONFIG`, install Kamaji with
+  `-f charts/kamaji/values-ha.yaml`); typecheck with `go vet -tags multinode ./e2e/`.
+  The hardware-fault specs (FM10/FM11) drive **real** power/network faults through
+  operator-supplied commands and **Skip** unless the hooks are configured:
+  `KAMAJI_E2E_POWER_OFF`/`KAMAJI_E2E_POWER_ON` and
+  `KAMAJI_E2E_NET_CUT`/`KAMAJI_E2E_NET_RESTORE`, each with `{{node}}` replaced by
+  the target node name (e.g. an `ipmitool`, PDU CLI, or Python smart-outlet
+  invocation).
 
 ## Verification status and prerequisites
 
 These caveats apply to all the implemented tests below:
 
-- **Compile-checked, not yet run.** The deterministic tests pass `go vet ./e2e/`
-  and the chaos tests pass `go vet -tags chaos ./e2e/`, but none have been
-  executed against a live cluster in this branch. They use the existing e2e
-  harness (`envtest` with `UseExistingCluster: true`), so they require a real
-  management cluster with the Kamaji operator deployed in the `kamaji-system`
-  namespace and a working datastore — the same prerequisites as the rest of
-  `e2e/`. The chaos tests additionally require chaos-mesh (`make e2e-chaos`).
+- **Compile-checked, not yet run.** All three lanes typecheck —
+  `go vet ./e2e/` (deterministic), `go vet -tags chaos ./e2e/`, and
+  `go vet -tags multinode ./e2e/` — but none have been executed against a live
+  cluster in this branch. They use the existing e2e harness (`envtest` with
+  `UseExistingCluster: true`), so they require a real management cluster with the
+  Kamaji operator deployed in the `kamaji-system` namespace and a working
+  datastore. The chaos tests additionally require chaos-mesh (`make e2e-chaos`);
+  the multi-node tests require ≥2 nodes and, for FM10/FM11, the configured power/
+  network fault hooks (`make e2e-multinode`).
 - **They scale the operator.** Each failover test scales the controller
   Deployment to 2 replicas in `BeforeEach` and restores `replicaCount: 1` in
   `JustAfterEach`, because the suite's `utils_test.go` asserts a single operator
@@ -286,6 +298,53 @@ the test most likely to need tuning before it runs.
 
 **Status:** implemented, chaos lane (`e2e/chaos_datastore_test.go`).
 
+### 9. Replicas spread across nodes  *(multi-node)*
+
+**Risk:** with no node spread, two replicas co-locate on one node, so a single
+node loss takes out both — and the `Fail`-policy webhooks with them. The HA is
+then nominal.
+
+**Test:** scale to 2 and assert the two controller pods land on **distinct
+nodes**. Validates the chart's default soft `podAntiAffinity` and the hard
+`topologySpreadConstraints` in `values-ha.yaml`. Needs ≥2 Ready nodes (Skips
+otherwise).
+
+**Status:** implemented, multi-node lane (`e2e/node_spread_placement_test.go`).
+
+### 10. Total node power-off  *(multi-node, hardware fault)*
+
+**Risk:** a whole node dies (power loss). Beyond losing a replica, the dead
+node's pod **lingers in the webhook Service's endpoints** until the node-monitor
+grace period prunes it, and a `Fail`-policy call routed to it fails during that
+window.
+
+**Test:** power off (for real, via the `KAMAJI_E2E_POWER_OFF` hook) a node
+hosting a replica; assert admission **recovers and stays available** (the
+survivor serves), then power the node back on and assert it rejoins and the
+operator returns to two ready replicas.
+
+**Design note:** the test asserts only admission availability, not tenant-CP
+readiness — a tenant pod might have been on the dead node, which would conflate
+the result. The webhook answer comes from the operator on a surviving node
+regardless. Power-on is registered for `AfterEach` cleanup so the lab node always
+comes back, even on failure.
+
+**Status:** implemented, multi-node lane (`e2e/node_power_failure_test.go`).
+
+### 11. Leader's node isolated from the network  *(multi-node, hardware fault)*
+
+**Risk:** the leader's node is network-isolated but the leader process keeps
+running — the dangerous split-brain shape. It must lose its lease and a standby
+must take over, rather than two managers acting at once.
+
+**Test:** cut the network (for real, via `KAMAJI_E2E_NET_CUT`) to the leader's
+node; assert a different pod **on a surviving node** acquires the lease, then
+restore. Because the lease has exactly one holder, leadership moving to another
+node is the proof there is no second active leader. Power-off of the leader's
+node is the clean-death variant, covered structurally by FM10.
+
+**Status:** implemented, multi-node lane (`e2e/leader_node_isolation_test.go`).
+
 ## Summary
 
 | # | Failure mode | Tier | Status |
@@ -298,3 +357,6 @@ the test most likely to need tuning before it runs.
 | 6 | Operator rolling upgrade | Deterministic | Implemented |
 | 7 | Network partition / split-brain | Chaos | Implemented |
 | 8 | Datastore failure | Chaos | Implemented |
+| 9 | Replicas spread across nodes | Multi-node | Implemented |
+| 10 | Total node power-off | Multi-node (HW fault) | Implemented |
+| 11 | Leader's node isolated | Multi-node (HW fault) | Implemented |

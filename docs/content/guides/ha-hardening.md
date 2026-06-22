@@ -47,6 +47,12 @@ guarantee while removing the single point of failure.
 | FM6 — survives a rolling upgrade | `operator_rolling_upgrade_test.go` | deterministic |
 | FM7 — leader self-terminates under partition | `chaos_partition_test.go` | chaos |
 | FM8 — tenant CP survives datastore member loss | `chaos_datastore_test.go` | chaos |
+| FM9 — replicas spread across nodes | `node_spread_placement_test.go` | multi-node |
+| FM10 — total node power-off (admission survival) | `node_power_failure_test.go` | multi-node (HW fault) |
+| FM11 — leader's node network-isolated | `leader_node_isolation_test.go` | multi-node (HW fault) |
+
+Multi-node fault injection helpers (power/network hooks, node helpers) live in
+`multinode_helpers_test.go`.
 
 Shared helpers (`leaderPodName`, `scaleOperator`, `controllerPods`) live in
 `operator_failover_test.go`.
@@ -55,6 +61,7 @@ Shared helpers (`leaderPodName`, `scaleOperator`, `controllerPods`) live in
 
 - `make chaos-mesh` — install chaos-mesh into the current cluster.
 - `make e2e-chaos` — run the chaos lane (`ginkgo --tags=chaos --label-filter=chaos`).
+- `make e2e-multinode` — run the multi-node lane against an existing ≥2-node cluster.
 
 ## How to run
 
@@ -62,12 +69,18 @@ Shared helpers (`leaderPodName`, `scaleOperator`, `controllerPods`) live in
 # Deterministic lane (FM1–FM6): gating-safe
 make e2e                       # spins up KinD, installs the stack, runs ./e2e
 
-# Chaos lane (FM7–FM8): non-gating, needs fault injection
+# Chaos lane (FM7–FM8): non-gating, needs chaos-mesh
 make e2e-chaos                 # = make e2e + chaos-mesh, then the chaos-tagged specs
+
+# Multi-node lane (FM9–FM11): non-gating, needs a real >=2-node cluster
+#   install Kamaji with -f charts/kamaji/values-ha.yaml; FM10/FM11 need fault hooks:
+#   KAMAJI_E2E_POWER_OFF / KAMAJI_E2E_POWER_ON / KAMAJI_E2E_NET_CUT / KAMAJI_E2E_NET_RESTORE
+make e2e-multinode
 
 # Typecheck without a cluster
 go vet ./e2e/                  # deterministic files
 go vet -tags chaos ./e2e/      # + chaos files
+go vet -tags multinode ./e2e/  # + multi-node files
 ```
 
 ## Verification status
@@ -150,8 +163,10 @@ precisely so it works on one node without evicting the harness. What single-node
 - **cross-node leader failover** (lose the node hosting the leader, not just the
   pod).
 
-These are the multi-node failure modes (FM9–FM11, planned) that this target
-exists to exercise.
+These are the multi-node failure modes (FM9–FM11, implemented in the `multinode`
+lane) that this target exists to exercise: FM9 asserts node-spread placement,
+FM10 powers a node off (admission survival + recovery), and FM11 network-isolates
+the leader's node (cross-node leadership handoff, no split-brain).
 
 ### Rough sizing
 
