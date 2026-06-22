@@ -132,24 +132,48 @@ e2e environment supports a different version range, adjust the `fromVersion` /
 **Risk:** a node drain takes down all operator replicas at once; or, conversely,
 a PDB on a single replica wedges drains entirely.
 
-**Test:**
-- With `replicaCount: 2`, cordon+drain a node hosting a replica; assert the
-  eviction respects `maxUnavailable: 1` (both replicas are never evicted
-  simultaneously).
-- With `replicaCount: 1`, assert **no** `PodDisruptionBudget` object is rendered
-  (the template is gated on `replicaCount > 1`) and the node drains freely.
+**Test:** with the operator scaled to 2 and a PDB (`maxUnavailable: 1`) in
+place, use the **Eviction API** — the same mechanism `kubectl drain` drives — to
+take down replicas: the first eviction succeeds, the budget then reports
+`disruptionsAllowed: 0`, and the second eviction is refused with HTTP 429. This
+proves a node drain can never remove both replicas at once.
 
-**Status:** to implement. PDB template added in
+**Design note:** the test drives the Eviction API directly rather than cordoning
+and draining a real node — a node drain in the single-node KinD e2e cluster
+would be destructive and could evict the test harness itself. Eviction is
+exactly what `kubectl drain` calls per-pod, so it validates the same guarantee
+without the blast radius. The second eviction is attempted only *after*
+`disruptionsAllowed` is observed at 0, so the 429 is deterministic rather than
+racing the PDB controller.
+
+**Caveat — enforcement, not gating:** the e2e environment installs the chart at
+the default `replicaCount: 1`, so the chart's PDB is intentionally absent there;
+the test therefore applies a PDB mirroring the chart's render at
+`replicaCount > 1`. It validates *enforcement behavior*, not the chart's
+*gating* template logic (`replicaCount: 1` -> no PDB). Gating is a templating
+property and should be covered by a `helm template` assertion in a chart unit
+test (not yet added — recommended follow-up).
+
+**Status:** implemented (`e2e/operator_pdb_test.go`). PDB template added in
 `charts/kamaji/templates/pdb.yaml`.
 
 ### 5. Lease singleton under concurrent startup  *(deterministic)*
 
 **Risk:** scaling up many replicas at once produces split-brain (two leaders).
 
-**Test:** scale 0→3 simultaneously; assert exactly one `holderIdentity` and that
-it remains stable for a sustained interval.
+**Test:** scale to 3 replicas, then assert a leader is elected, that the holder
+is one of the running controller pods, and that the `holderIdentity` stays put
+for a sustained interval (`Consistently`, 30s).
 
-**Status:** to implement.
+**Design note:** the stability check is the real assertion. The Lease can only
+name one holder at a time, so "two leaders" cannot be observed as two
+`holderIdentity` values — it would instead surface as the holder *flapping*
+between pods as managers fight over the lease. A `Consistently` that the holder
+does not change is therefore the signal that election converged cleanly with no
+contention churn. controller-runtime only runs reconcilers while holding the
+lease, so a stable holder also means a single active control loop.
+
+**Status:** implemented (`e2e/leader_singleton_test.go`).
 
 ### 6. Operator rolling upgrade  *(deterministic)*
 
@@ -195,8 +219,8 @@ datastore connection.
 | 1 | Leader pod death → re-election | Deterministic | Implemented |
 | 2 | Webhook availability during failover | Deterministic | Implemented |
 | 3 | Mid-flight reconcile interruption | Deterministic | Implemented |
-| 4 | PDB enforcement under drain | Deterministic | To implement |
-| 5 | Lease singleton under concurrent startup | Deterministic | To implement |
+| 4 | PDB enforcement under drain | Deterministic | Implemented |
+| 5 | Lease singleton under concurrent startup | Deterministic | Implemented |
 | 6 | Operator rolling upgrade | Deterministic | To implement |
 | 7 | Network partition / split-brain | Chaos | To implement |
 | 8 | Datastore failure | Chaos | To implement |
