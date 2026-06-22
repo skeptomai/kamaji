@@ -339,6 +339,19 @@ e2e: env build load helm ginkgo cert-manager gateway-api envoy-gateway ## Create
 	$(MAKE) datastores
 	$(GINKGO) -v ./e2e
 
+.PHONY: chaos-mesh
+chaos-mesh: helm ## Install chaos-mesh into the current cluster (KinD/containerd).
+	$(HELM) upgrade --install chaos-mesh chaos-mesh \
+		--repo https://charts.chaos-mesh.org \
+		--namespace chaos-mesh --create-namespace \
+		--set chaosDaemon.runtime=containerd \
+		--set chaosDaemon.socketPath=/run/containerd/containerd.sock \
+		--wait
+
+.PHONY: e2e-chaos
+e2e-chaos: e2e chaos-mesh ## Run the chaos-lane failover tests (network partition, datastore loss). Requires fault injection; non-gating.
+	$(GINKGO) -v --tags=chaos --label-filter=chaos ./e2e
+
 ##@ Document
 
 CAPI_URL = https://github.com/clastix/cluster-api-control-plane-provider-kamaji.git
