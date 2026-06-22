@@ -215,14 +215,29 @@ lease, so a stable holder also means a single active control loop.
 
 ### 6. Operator rolling upgrade  *(deterministic)*
 
-**Risk:** upgrading the operator image causes a reconciliation gap or an
-unclean lease handoff.
+**Risk:** upgrading the operator image causes an admission gap, a reconciliation
+gap, or an unclean lease handoff.
 
-**Test:** with 2 replicas + PDB, change the operator image and assert no
-reconcile gap (a TCP mutated during the rollout still converges) and a clean
-lease transfer. Exercises PDB + leader election + readiness composing together.
+**Test:** with 2 replicas, force a rollout (a pod-template change with the same
+image), then assert: admission stays available throughout (a TCP `Patch` through
+the `Fail`-policy webhook succeeds `Consistently` across the roll); the rollout
+completes with all replicas updated and ready; leadership lands on a rolled pod;
+and the new leader still reconciles a post-roll spec change to completion
+(`ObservedGeneration` catches up).
 
-**Status:** to implement.
+**Design note — the PDB is *not* what protects a rolling update.** A Deployment
+rolling update is governed by the Deployment's own `strategy.rollingUpdate`
+(`maxUnavailable`/`maxSurge`), not by a PodDisruptionBudget — the PDB only
+constrains the Eviction API used by node drains (Failure Mode 4). At 2 replicas
+the *default* strategy resolves to `maxUnavailable: 0`, `maxSurge: 1`, so a
+surge pod becomes ready before an old one is removed and a webhook endpoint is
+always present. This test therefore exercises the Deployment strategy + readiness
++ leader handoff + webhook continuity — deliberately *without* a PDB, to avoid
+implying the PDB participates. Simulating the upgrade with a same-image
+pod-template change exercises identical rollout mechanics without needing a
+second image tag.
+
+**Status:** implemented (`e2e/operator_rolling_upgrade_test.go`).
 
 ### 7. Network partition / split-brain of the active leader  *(chaos)*
 
@@ -259,6 +274,6 @@ datastore connection.
 | 3 | Mid-flight reconcile interruption | Deterministic | Implemented |
 | 4 | PDB enforcement under drain | Deterministic | Implemented |
 | 5 | Lease singleton under concurrent startup | Deterministic | Implemented |
-| 6 | Operator rolling upgrade | Deterministic | To implement |
+| 6 | Operator rolling upgrade | Deterministic | Implemented |
 | 7 | Network partition / split-brain | Chaos | To implement |
 | 8 | Datastore failure | Chaos | To implement |
