@@ -2,8 +2,19 @@
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
-# -- The number of the pod replicas for the Kamaji controller.
+# -- The number of the pod replicas for the Kamaji controller. Set to 2 or more for
+# active/passive HA; leader election (always enabled) ensures a single active manager.
 replicaCount: 1
+
+# PodDisruptionBudget for the Kamaji controller. Only rendered when replicaCount > 1,
+# since a PDB on a single replica cannot provide availability and would block node drains.
+podDisruptionBudget:
+  # -- Enable a PodDisruptionBudget for the controller (effective only with replicaCount > 1).
+  enabled: true
+  # -- Minimum controller pods that must stay available during voluntary disruptions. Mutually exclusive with maxUnavailable.
+  minAvailable:
+  # -- Maximum controller pods that may be unavailable during voluntary disruptions. Defaults to 1 when minAvailable is unset.
+  maxUnavailable: 1
 
 image:
   # -- The container image of the Kamaji controller.
