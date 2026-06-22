@@ -33,6 +33,44 @@ The default chart ships `replicaCount: 1`. Running `replicaCount: 2+` (plus the
 `PodDisruptionBudget` introduced alongside this document) is what moves the
 operator from "single point of failure" to "active/passive HA".
 
+### The webhook gap: `Fail` is correct, single-replica is the defect
+
+The admission webhooks and the reconcilers are two different planes that happen
+to ship in the same binary:
+
+- The **reconcilers** are an *asynchronous control loop* that writes cluster
+  state. This must be a singleton — two active reconcilers would race and clobber
+  each other — which is the entire reason leader election exists.
+- The **webhooks** are a *synchronous, stateless gatekeeper*: the API server
+  calls them in-flight to default and validate the incoming object. They do not
+  asynchronously mutate cluster state, so running many of them at once is
+  harmless — there is no split-brain to create. A webhook is a gatekeeper, not an
+  operator.
+
+That distinction is why the correct topology is **many webhook servers (one per
+replica, all serving) and one active reconciler** — and why webhook serving is
+deliberately *not* leader-gated (controller-runtime starts the webhook server on
+every replica; only controllers wait for the lease).
+
+It also corrects a common misreading of the operator's `failurePolicy: Fail`
+webhooks. **`Fail` is the correct, safe choice and should stay:** if defaulting
+or validation cannot run, the write should be *rejected*, not allowed through as
+a possibly-malformed `TenantControlPlane`. Switching to `Ignore` would trade a
+real correctness guarantee for availability — the wrong fix.
+
+The actual defect is **serving a fail-closed webhook from a single replica.**
+Because the webhook server lives in the operator pod, one replica means the
+admission endpoint is a single point of failure: when that pod is gone (crash,
+eviction, node loss, rollout) the API server cannot reach the webhook, and
+`Fail` rejects every `TenantControlPlane` create/update. `Fail` is not the bug —
+it is the *amplifier* that turns "the one operator pod is down" into a full
+admission outage.
+
+The fix follows directly: run `replicaCount ≥ 2` so the webhook Service keeps a
+live endpoint through any single pod loss (preserving `Fail`, removing the
+single point of failure it was failing against), and add a PDB so voluntary
+disruptions cannot drain all endpoints at once.
+
 ## Test tiers
 
 - **Deterministic (CI-gating):** standard Ginkgo e2e against an existing cluster,
