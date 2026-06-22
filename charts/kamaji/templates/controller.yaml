@@ -97,6 +97,25 @@ spec:
       {{- with .Values.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
+      {{- else }}
+      # Default: best-effort spread of controller replicas across nodes so a
+      # single node loss cannot take out every replica (and the Fail-policy
+      # webhooks with it). Soft, so it never wedges scheduling on small or
+      # single-node clusters; override `affinity`, or set topologySpreadConstraints
+      # with whenUnsatisfiable: DoNotSchedule for a hard guarantee on multi-node.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    {{- include "kamaji.selectorLabels" . | nindent 20 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- with .Values.tolerations }}
       tolerations:

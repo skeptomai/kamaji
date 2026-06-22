@@ -96,8 +96,16 @@ nodeSelector: {}
 # -- Kubernetes node taints that the Kamaji controller pods would tolerate
 tolerations: []
 
-# -- Kubernetes affinity rules to apply to Kamaji controller pods
+# -- Kubernetes affinity rules to apply to Kamaji controller pods. When empty,
+# the chart applies a default soft podAntiAffinity that spreads replicas across
+# nodes (best-effort) for HA. Set this to override that default entirely.
 affinity: {}
+
+# -- Kubernetes topology spread constraints for the Kamaji controller pods. Use
+# this for a hard HA guarantee on multi-node clusters, e.g. maxSkew 1 over
+# kubernetes.io/hostname (and/or topology.kubernetes.io/zone) with
+# whenUnsatisfiable: DoNotSchedule. See charts/kamaji/values-ha.yaml.
+topologySpreadConstraints: []
 
 # -- Directory which will be used to work with temporary files. (default "/tmp/kamaji")
 temporaryDirectoryPath: "/tmp/kamaji"

@@ -22,8 +22,18 @@ guarantee while removing the single point of failure.
 - `charts/kamaji/templates/pdb.yaml` — a `PodDisruptionBudget`, rendered only
   when `replicaCount > 1` (a PDB on a single replica cannot help and would block
   node drains).
-- `charts/kamaji/values.yaml` — a `podDisruptionBudget` block and HA guidance on
-  `replicaCount`.
+- `charts/kamaji/templates/controller.yaml` — a **default soft `podAntiAffinity`**
+  (when `affinity` is unset) that spreads controller replicas across nodes
+  best-effort, plus support for `topologySpreadConstraints`. Without node spread,
+  two replicas can co-locate on one node and a single node loss takes out every
+  replica — and the `Fail`-policy webhooks with it. Soft by default so it never
+  wedges scheduling on small/single-node clusters.
+- `charts/kamaji/values.yaml` — `podDisruptionBudget`, `topologySpreadConstraints`,
+  and HA guidance on `replicaCount`/`affinity`.
+- `charts/kamaji/values-ha.yaml` — a ready-to-use **multi-node HA overlay**:
+  `replicaCount: 2`, PDB `minAvailable: 1`, and a *hard* hostname spread
+  (`DoNotSchedule`) plus soft zone spread, scoped with
+  `matchLabelKeys: [pod-template-hash]` so rolling updates don't stall.
 
 **Tests** (`e2e/`)
 
@@ -75,68 +85,85 @@ to need environment tuning before a green run:
 
 ## What a test cluster looks like
 
-The existing `make e2e` target builds the reference cluster; the HA tests run on
-top of it. Anatomy:
+There are two profiles. The single-node KinD harness tests the HA *mechanics*;
+the real multi-node cluster tests the HA *guarantee* — surviving the loss of a
+genuine, independent failure domain. The guarantee is the goal.
 
-- **Base:** a single-node **KinD** cluster (`kind create cluster --name kamaji`)
-  on Docker. The control-plane node is a container on the `kind` Docker network
-  (default `172.18.0.0/16`). The kube-apiserver runs as a **kubeadm static pod**
-  in `kube-system` (what FM7 targets), and the runtime is **containerd**
-  (`/run/containerd/containerd.sock`, what chaos-mesh's daemon needs).
-- **LoadBalancer:** **MetalLB** in L2 mode, with an address pool carved from the
-  `kind` Docker subnet (`hack/metallb.yaml`). Tenant control planes get their
-  `ControlPlaneEndpoint` from this pool — which is why the tests hardcode
-  addresses like `172.18.0.2`–`172.18.0.7`. **Each TenantControlPlane needs a
-  distinct, free address from that pool**; the HA tests reserve `.4`–`.7`.
-- **Supporting stack:** cert-manager (webhook + datastore certs), Gateway API
-  CRDs + Envoy Gateway (Gateway/Konnectivity tests), Kamaji CRDs, and the Kamaji
-  operator (`replicaCount: 1` by default; image side-loaded with
-  `pullPolicy: Never`; telemetry disabled).
-- **Datastore:** etcd via the `clastix/kamaji-etcd` chart (release `etcd-primary`
-  in `kamaji-system`), a multi-member (quorum) StatefulSet — this is what FM8
-  exercises.
-- **Chaos (FM7/FM8 only):** chaos-mesh, installed with
-  `chaosDaemon.runtime=containerd` and the containerd socket path.
+### Reference target: a real multi-node k3s cluster on bare-metal nodes
 
-### What the cluster must support for the HA tests
+This is the cluster the HA work is built for. "Bare metal" matters: each node is
+independent hardware (its own power, kernel, NIC, disk), so "lose a node" is a
+real machine failure, not a container or hypervisor abstraction. Racks/rooms map
+to `topology.kubernetes.io/zone` for real spread testing.
 
-- **Scheduling 2–3 operator replicas.** The failover tests scale the operator
-  Deployment up and restore it to 1 afterward. A single node is sufficient —
-  multiple operator pods co-schedule and leader election still works across them.
-- **A multi-member datastore** for FM8 (the kamaji-etcd quorum provides it).
-- **chaos-mesh** for the chaos lane.
+- **Control plane:** **k3s HA with embedded etcd** — an odd number (3+) of
+  `server` nodes (`--cluster-init` on the first, join the rest), plus `agent`
+  nodes. This is the HA *management* cluster the whole stack ultimately depends
+  on (Kamaji runs every tenant control plane as pods here, so the management
+  apiserver/etcd availability is the ceiling for everything).
+- **Operator HA:** deploy with `-f charts/kamaji/values-ha.yaml` — `replicaCount: 2`,
+  PDB, and hard hostname spread so the two replicas land on different physical
+  nodes. Without that spread, the HA is nominal: both replicas could share a node
+  and one machine loss takes admission down.
+- **Storage:** k3s ships `local-path`, but those PVs are **node-pinned** — a
+  datastore member's volume can't move if its node dies. Use **Longhorn** for
+  replicated, movable volumes so etcd members can reschedule across physical
+  nodes.
+- **LoadBalancer:** k3s servicelb (Klipper) on the real LAN, or MetalLB (L2/BGP).
+  Tenant-CP `ControlPlaneEndpoint`s come from real routable addresses — **not**
+  the KinD `172.18.0.x` range, so the tests' hardcoded addresses must be
+  parametrized for this cluster.
 
-### Single-node is enough to start; multi-node is closer to production
+**k3s-specific deltas the tests must account for** (k3s architecture facts):
 
-The deterministic lane (FM1–FM6) runs fully on the default single-node KinD
-cluster — including FM4, which uses the **Eviction API** (what `kubectl drain`
-calls) rather than a real node drain precisely so it works on one node without
-evicting the test harness.
+- **FM7 must retarget.** k3s runs the apiserver *inside the `k3s server` process*,
+  not as a `kube-system` static pod, so the chaos-mesh `component: kube-apiserver`
+  selector finds nothing. Partition the operator pod from the **API endpoint**
+  instead (server node IPs `:6443` / the `kubernetes` service ClusterIP). k3s also
+  ships a NetworkPolicy controller, so a plain `NetworkPolicy` partition may work
+  without chaos-mesh.
+- **chaos-mesh socket** on k3s is `/run/k3s/containerd/containerd.sock` (not
+  `/run/containerd/...`).
 
-A **multi-node** KinD cluster (1 control-plane + 2–3 workers) is worth using to
-exercise what one node cannot:
+### Dev/CI harness: single-node KinD (`make e2e`)
 
-- a **real node drain** (cordon + `kubectl drain`) against the PDB, not just the
-  Eviction API;
-- **pod anti-affinity** — a production HA operator should spread its replicas
-  across nodes. The chart exposes `affinity` but ships **no default
-  anti-affinity**; adding a `topologyKey: kubernetes.io/hostname` rule (and
-  testing it lands replicas on distinct nodes) is a recommended follow-up that
-  *requires* multiple nodes to validate;
-- **cross-node leader failover** (kill the node hosting the leader, not just the
+The existing `make e2e` builds a single-node **KinD** cluster on Docker: apiserver
+as a kubeadm **static pod** in `kube-system` (FM7's default target), containerd at
+`/run/containerd/containerd.sock`, **MetalLB** L2 with a pool from the `kind`
+subnet (hence the hardcoded `172.18.0.2`–`.7` addresses; each TCP needs a distinct
+one, and the HA tests reserve `.4`–`.7`), cert-manager, Gateway API + Envoy
+Gateway, the Kamaji operator (`replicaCount: 1`, image side-loaded), and the
+`clastix/kamaji-etcd` datastore (release `etcd-primary` in `kamaji-system`).
+
+The deterministic lane (FM1–FM6) runs fully here — including FM4, which uses the
+**Eviction API** (what `kubectl drain` calls) rather than a real node drain
+precisely so it works on one node without evicting the harness. What single-node
+**cannot** test, and the bare-metal cluster can:
+
+- a **real node drain** (cordon + `kubectl drain`) against the PDB;
+- **node-spread placement** — that the two replicas actually land on distinct
+  nodes (the chart's default anti-affinity / `values-ha.yaml` spread is now in
+  place; multi-node is where it's *validated*);
+- **ungraceful node loss** — the EndpointSlice-pruning window where a dead node's
+  pod lingers in the webhook Service endpoints and `Fail`-policy calls routed to
+  it fail until pruned;
+- **cross-node leader failover** (lose the node hosting the leader, not just the
   pod).
+
+These are the multi-node failure modes (FM9–FM11, planned) that this target
+exists to exercise.
 
 ### Rough sizing
 
 Each TenantControlPlane runs an apiserver + controller-manager + scheduler (plus
-its etcd), so running several TCPs alongside an HA operator and chaos-mesh wants
-a Docker host with headroom — on the order of **6–8 vCPU and 12–16 GB RAM** as a
-working guideline, more if you raise replica counts or run many TCPs at once.
+its etcd). Running several TCPs alongside an HA operator and chaos-mesh wants
+nodes with headroom — on the order of **6–8 vCPU and 12–16 GB RAM per node** as a
+working guideline, more if you raise replica counts or run many TCPs.
 
 ### Managed-cluster caveat
 
-For a hosted control plane on a **managed** Kubernetes (EKS/GKE/AKS), the
-kube-apiserver is not a pod you can see or target, so **FM7 does not apply** —
-its split-brain guarantee would need a provider-specific fault-injection
-approach. FM1–FM6 and FM8 are portable to any conformant cluster that satisfies
-the prerequisites above.
+On a **managed** Kubernetes (EKS/GKE/AKS) the kube-apiserver is not a pod you can
+see or target, so **FM7 does not apply** as written — its split-brain guarantee
+would need a provider-specific fault-injection approach (the same retarget the
+k3s profile needs). FM1–FM6 and FM8 are portable to any conformant cluster that
+satisfies the prerequisites above.

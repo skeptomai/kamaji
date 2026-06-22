@@ -1,0 +1,41 @@
+# HA overlay for running the Kamaji operator on a real multi-node cluster.
+#
+#   helm upgrade --install kamaji ./charts/kamaji -f ./charts/kamaji/values-ha.yaml
+#
+# Active/passive HA: leader election (always on) keeps a single active reconciler
+# while every replica serves the admission webhooks, so admission survives losing
+# a replica. The constraints below ensure the replicas actually land on different
+# nodes (and, where labelled, different zones) — without that, two replicas can
+# co-locate and a single node loss takes out admission entirely.
+
+# Two replicas: one active leader + one warm standby.
+replicaCount: 2
+
+# Keep at least one controller pod through voluntary disruptions (node drains,
+# rollouts). Renders only because replicaCount > 1.
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Hard node spread + soft zone spread. matchLabelKeys scopes the skew to the
+# current pod-template revision so a rolling update's surge pod does not stall
+# the rollout on clusters with few nodes.
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: DoNotSchedule
+    matchLabelKeys:
+      - pod-template-hash
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: kamaji
+        app.kubernetes.io/component: controller-manager
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+    matchLabelKeys:
+      - pod-template-hash
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: kamaji
+        app.kubernetes.io/component: controller-manager
