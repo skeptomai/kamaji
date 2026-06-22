@@ -352,6 +352,10 @@ chaos-mesh: helm ## Install chaos-mesh into the current cluster (KinD/containerd
 e2e-chaos: e2e chaos-mesh ## Run the chaos-lane failover tests (network partition, datastore loss). Requires fault injection; non-gating.
 	$(GINKGO) -v --tags=chaos --label-filter=chaos ./e2e
 
+.PHONY: e2e-multinode
+e2e-multinode: ginkgo ## Run multi-node HA tests (FM9-11) against an EXISTING >=2-node cluster. Set KUBECONFIG; install Kamaji with -f charts/kamaji/values-ha.yaml. Hardware-fault specs need KAMAJI_E2E_POWER_OFF/ON and/or KAMAJI_E2E_NET_CUT/RESTORE ({{node}} placeholder).
+	$(GINKGO) -v --tags=multinode --label-filter=multinode ./e2e
+
 ##@ Document
 
 CAPI_URL = https://github.com/clastix/cluster-api-control-plane-provider-kamaji.git
