@@ -339,13 +339,17 @@ e2e: env build load helm ginkgo cert-manager gateway-api envoy-gateway ## Create
 	$(MAKE) datastores
 	$(GINKGO) -v ./e2e
 
+# Containerd socket for chaos-mesh's daemon. Default fits KinD/kubeadm; for k3s
+# override: make chaos-mesh CHAOS_CONTAINERD_SOCK=/run/k3s/containerd/containerd.sock
+CHAOS_CONTAINERD_SOCK ?= /run/containerd/containerd.sock
+
 .PHONY: chaos-mesh
-chaos-mesh: helm ## Install chaos-mesh into the current cluster (KinD/containerd).
+chaos-mesh: helm ## Install chaos-mesh into the current cluster. Override CHAOS_CONTAINERD_SOCK for k3s.
 	$(HELM) upgrade --install chaos-mesh chaos-mesh \
 		--repo https://charts.chaos-mesh.org \
 		--namespace chaos-mesh --create-namespace \
 		--set chaosDaemon.runtime=containerd \
-		--set chaosDaemon.socketPath=/run/containerd/containerd.sock \
+		--set chaosDaemon.socketPath=$(CHAOS_CONTAINERD_SOCK) \
 		--wait
 
 .PHONY: e2e-chaos

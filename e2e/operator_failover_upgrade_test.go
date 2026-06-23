@@ -45,7 +45,7 @@ var _ = Describe("Kamaji operator failover during a TenantControlPlane upgrade",
 					Deployment: kamajiv1alpha1.DeploymentSpec{Replicas: pointer.To(int32(1))},
 					Service:    kamajiv1alpha1.ServiceSpec{ServiceType: "ClusterIP"},
 				},
-				NetworkProfile: kamajiv1alpha1.NetworkProfileSpec{Address: "172.18.0.5"},
+				NetworkProfile: kamajiv1alpha1.NetworkProfileSpec{Address: controlPlaneAddress(5)},
 				Kubernetes: kamajiv1alpha1.KubernetesSpec{
 					Version: fromVersion,
 					Kubelet: kamajiv1alpha1.KubeletSpec{CGroupFS: "cgroupfs"},

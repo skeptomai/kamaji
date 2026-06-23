@@ -31,14 +31,6 @@ import (
 // label for your install. A latency/partition variant (chaos-mesh IOChaos or a
 // toxiproxy sidecar in front of the datastore) is a natural extension.
 var _ = Describe("Tenant control plane survives a datastore member loss", Label("chaos"), func() {
-	// The e2e env installs etcd via the clastix/kamaji-etcd chart as Helm release
-	// "etcd-primary" in kamaji-system (see the Makefile `datastore-etcd` target),
-	// so members carry app.kubernetes.io/instance=etcd-primary. Adjust per install.
-	const (
-		datastoreLabelKey   = "app.kubernetes.io/instance"
-		datastoreLabelValue = "etcd-primary"
-	)
-
 	var tcp *kamajiv1alpha1.TenantControlPlane
 
 	BeforeEach(func() {
@@ -52,7 +44,7 @@ var _ = Describe("Tenant control plane survives a datastore member loss", Label(
 					Deployment: kamajiv1alpha1.DeploymentSpec{Replicas: pointer.To(int32(1))},
 					Service:    kamajiv1alpha1.ServiceSpec{ServiceType: "ClusterIP"},
 				},
-				NetworkProfile: kamajiv1alpha1.NetworkProfileSpec{Address: "172.18.0.7"},
+				NetworkProfile: kamajiv1alpha1.NetworkProfileSpec{Address: controlPlaneAddress(7)},
 				Kubernetes: kamajiv1alpha1.KubernetesSpec{
 					Version: "v1.23.6",
 					Kubelet: kamajiv1alpha1.KubeletSpec{CGroupFS: "cgroupfs"},
@@ -72,11 +64,11 @@ var _ = Describe("Tenant control plane survives a datastore member loss", Label(
 	})
 
 	It("stays Ready when one datastore member is killed and the member recovers", func() {
-		pods := datastorePods(datastoreLabelKey, datastoreLabelValue)
+		key, val := datastoreSelector()
+		pods := datastorePods(key, val)
 		if len(pods) < 2 {
-			Skip("could not locate a multi-member datastore via " +
-				datastoreLabelKey + "=" + datastoreLabelValue +
-				"; adjust the selector for this environment")
+			Skip("could not locate a multi-member datastore via " + key + "=" + val +
+				"; set KAMAJI_E2E_DATASTORE_SELECTOR for this environment")
 		}
 		original := len(pods)
 
@@ -99,7 +91,7 @@ var _ = Describe("Tenant control plane survives a datastore member loss", Label(
 
 		By("the datastore recovers its full membership")
 		Eventually(func() int {
-			return len(datastorePods(datastoreLabelKey, datastoreLabelValue))
+			return len(datastorePods(key, val))
 		}, 2*time.Minute, 2*time.Second).Should(Equal(original))
 	})
 })

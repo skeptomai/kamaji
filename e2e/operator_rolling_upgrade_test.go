@@ -44,7 +44,7 @@ var _ = Describe("Kamaji operator survives a rolling upgrade", func() {
 					Deployment: kamajiv1alpha1.DeploymentSpec{Replicas: pointer.To(int32(1))},
 					Service:    kamajiv1alpha1.ServiceSpec{ServiceType: "ClusterIP"},
 				},
-				NetworkProfile: kamajiv1alpha1.NetworkProfileSpec{Address: "172.18.0.6"},
+				NetworkProfile: kamajiv1alpha1.NetworkProfileSpec{Address: controlPlaneAddress(6)},
 				Kubernetes: kamajiv1alpha1.KubernetesSpec{
 					Version: "v1.23.6",
 					Kubelet: kamajiv1alpha1.KubeletSpec{CGroupFS: "cgroupfs"},

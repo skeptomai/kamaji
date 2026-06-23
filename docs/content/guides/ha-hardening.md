@@ -101,6 +101,27 @@ to need environment tuning before a green run:
 - **FM8** selects datastore members by `app.kubernetes.io/instance=etcd-primary`;
   it **Skips** if it can't find a multi-member datastore, so adjust per install.
 
+## Portability: environment knobs
+
+The HA tests default to the single-node KinD harness, so `make e2e` needs no
+configuration. To run them against another cluster (e.g. bare-metal k3s), set
+the relevant `KAMAJI_E2E_*` vars — everything is env-driven, nothing
+cluster-specific is committed.
+
+| Variable | Purpose | Default (KinD) | Example (k3s) |
+| --- | --- | --- | --- |
+| `KAMAJI_E2E_ADDR_PREFIX` | LB pool prefix for tenant-CP endpoints (tests use offsets 3–8) | `172.18.0` | `10.0.7` |
+| `KAMAJI_E2E_OPERATOR_NS` | namespace the operator runs in | `kamaji-system` | `kamaji-system` |
+| `KAMAJI_E2E_DATASTORE_SELECTOR` | FM8 datastore member label `key=value` | `app.kubernetes.io/instance=etcd-primary` | (per install) |
+| `KAMAJI_E2E_APISERVER_ADDR` | FM7 partition target; empty = kube-apiserver static pods | *(unset)* | server node IP / kubernetes ClusterIP |
+| `KAMAJI_E2E_POWER_OFF` / `_ON` | FM10 power hooks (`{{node}}` placeholder) | *(unset → Skip)* | `python3 hack/lab-fault.py off {{node}}` |
+| `KAMAJI_E2E_NET_CUT` / `_RESTORE` | FM11 network hooks (`{{node}}` placeholder) | *(unset → Skip)* | `python3 hack/lab-fault.py cut {{node}}` |
+| `CHAOS_CONTAINERD_SOCK` (make var) | chaos-mesh daemon socket | `/run/containerd/containerd.sock` | `/run/k3s/containerd/containerd.sock` |
+
+Note: the *upstream* e2e tests (e.g. `tcp_ready_test.go`) still hardcode
+`172.18.0.2`; only the HA tests added here are parametrized. Making the whole
+suite portable is a separate, larger change.
+
 ## What a test cluster looks like
 
 There are two profiles. The single-node KinD harness tests the HA *mechanics*;

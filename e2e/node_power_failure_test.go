@@ -58,6 +58,7 @@ var _ = Describe("Admission survives a total node power-off", Label("multinode")
 					Deployment: kamajiv1alpha1.DeploymentSpec{Replicas: pointer.To(int32(1))},
 					Service:    kamajiv1alpha1.ServiceSpec{ServiceType: "ClusterIP"},
 				},
+				NetworkProfile: kamajiv1alpha1.NetworkProfileSpec{Address: controlPlaneAddress(8)},
 				Kubernetes: kamajiv1alpha1.KubernetesSpec{
 					Version: "v1.23.6",
 					Kubelet: kamajiv1alpha1.KubeletSpec{CGroupFS: "cgroupfs"},

@@ -21,8 +21,8 @@ import (
 	kamajiv1alpha1 "github.com/clastix/kamaji/api/v1alpha1"
 )
 
+// operatorNamespace is defined in ha_config_test.go (env-overridable).
 const (
-	operatorNamespace = "kamaji-system"
 	// LeaderElectionID configured in cmd/manager/cmd.go; controller-runtime
 	// backs it with a coordination.k8s.io/v1 Lease of the same name.
 	leaderElectionLease = "kamaji.clastix.io"
@@ -122,7 +122,7 @@ var _ = Describe("Kamaji operator leader failover", func() {
 					Deployment: kamajiv1alpha1.DeploymentSpec{Replicas: pointer.To(int32(1))},
 					Service:    kamajiv1alpha1.ServiceSpec{ServiceType: "ClusterIP"},
 				},
-				NetworkProfile: kamajiv1alpha1.NetworkProfileSpec{Address: "172.18.0.3"},
+				NetworkProfile: kamajiv1alpha1.NetworkProfileSpec{Address: controlPlaneAddress(3)},
 				Kubernetes: kamajiv1alpha1.KubernetesSpec{
 					Version: "v1.23.6",
 					Kubelet: kamajiv1alpha1.KubeletSpec{CGroupFS: "cgroupfs"},

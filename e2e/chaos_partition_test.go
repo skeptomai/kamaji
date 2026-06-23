@@ -48,10 +48,33 @@ var _ = Describe("Leader self-terminates when partitioned from the API server", 
 		Expect(originalLeader).NotTo(BeEmpty())
 		baselineRestarts := containerRestarts(originalLeader)
 
-		By("partitioning the leader pod from the kube-apiserver via chaos-mesh NetworkChaos")
-		// Target the leader pod by exact name; cut its egress to the apiserver
-		// static pods in kube-system. chaos-mesh injects this in the pod netns,
-		// so it works regardless of the CNI's NetworkPolicy support.
+		By("partitioning the leader pod from the API server via chaos-mesh NetworkChaos")
+		// Cut the leader pod's egress to the API server. chaos-mesh injects this
+		// in the pod netns, so it works regardless of the CNI's NetworkPolicy
+		// support. The "other side" of the partition is environment-specific:
+		//   - default (KinD/kubeadm): the kube-apiserver static pods in kube-system.
+		//   - KAMAJI_E2E_APISERVER_ADDR set (e.g. k3s, where the apiserver is not a
+		//     pod): an external IP — a server node IP or the kubernetes ClusterIP.
+		spec := map[string]interface{}{
+			"action":    "partition",
+			"direction": "to",
+			"mode":      "all",
+			"selector": map[string]interface{}{
+				"namespaces":     []interface{}{operatorNamespace},
+				"fieldSelectors": map[string]interface{}{"metadata.name": originalLeader},
+			},
+		}
+		if addr := apiserverExternalAddr(); addr != "" {
+			spec["externalTargets"] = []interface{}{addr}
+		} else {
+			spec["target"] = map[string]interface{}{
+				"mode": "all",
+				"selector": map[string]interface{}{
+					"namespaces":     []interface{}{"kube-system"},
+					"labelSelectors": map[string]interface{}{"component": "kube-apiserver"},
+				},
+			}
+		}
 		chaos = &unstructured.Unstructured{
 			Object: map[string]interface{}{
 				"apiVersion": "chaos-mesh.org/v1alpha1",
@@ -60,22 +83,7 @@ var _ = Describe("Leader self-terminates when partitioned from the API server", 
 					"name":      "kamaji-leader-partition",
 					"namespace": operatorNamespace,
 				},
-				"spec": map[string]interface{}{
-					"action":    "partition",
-					"direction": "to",
-					"mode":      "all",
-					"selector": map[string]interface{}{
-						"namespaces":     []interface{}{operatorNamespace},
-						"fieldSelectors": map[string]interface{}{"metadata.name": originalLeader},
-					},
-					"target": map[string]interface{}{
-						"mode": "all",
-						"selector": map[string]interface{}{
-							"namespaces":     []interface{}{"kube-system"},
-							"labelSelectors": map[string]interface{}{"component": "kube-apiserver"},
-						},
-					},
-				},
+				"spec": spec,
 			},
 		}
 		Expect(k8sClient.Create(context.Background(), chaos)).To(Succeed())
